@@ -39,15 +39,13 @@ const getAllUserAccounts = async (req, res) => {
         }
         const token = authHeader.split(" ")[1];
 
-        
-
         const decoded = verifyJWT(token);
         const userId = decoded.id;
 
         const result = await pool.query(`SELECT * FROM users WHERE id = $1`, [userId]);
 
         const { rows } = await pool.query(`SELECT * FROM accounts WHERE user_id = $1`, [userId]);
-        return res.status(200).json({accounts:rows,user:result.rows[0]});
+        return res.status(200).json({ accounts: rows, user: result.rows[0] });
 
     } catch (err) {
         if (err.name === "TokenExpiredError") {
@@ -88,52 +86,81 @@ const createAccount = async (req, res) => {
         }
     }
 };
-
 const updateAccount = async (req, res) => {
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
-            return res.status(401).json({ message: "Authorization token missing or malformed" });
-        }
-        const token = authHeader.split(" ")[1];
-        const decoded = verifyJWT(token);
-        const userId = decoded.id;
-        const accountId = req.params.accountId;
-
-        const { balance } = req.body;
-
-        // Ensure account belongs to user
-        const check = await pool.query(`SELECT * FROM accounts WHERE id = $1 AND user_id = $2`, [accountId, userId]);
-        if (check.rows.length === 0) {
-            return res.status(403).json({ message: "Unauthorized or account not found" });
-        }
-
-        // Create a log string
-        const timestamp = new Date().toISOString().replace("T", " ").split(".")[0]; // e.g. "2025-04-12 14:03:21"
-        const logEntry = `Balance updated to ₹${balance} on ${timestamp}`;
-
-        const { rows } = await pool.query(
-            `UPDATE accounts 
-             SET balance = COALESCE($1, balance),
-                 logs = array_append(logs, $2)
-             WHERE id = $3
-             RETURNING *`,
-            [balance, logEntry, accountId]
-        );
-
-        return res.status(200).json(rows[0]);
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "Authorization token missing or malformed" });
+      }
+  
+      const token = authHeader.split(" ")[1];
+      const decoded = verifyJWT(token);
+      const userId = decoded.id;
+  
+      const { fromAccountId, toAccountId, amount } = req.body;
+  
+      if (!fromAccountId || !toAccountId || !amount || amount <= 0) {
+        return res.status(400).json({ message: "Invalid transfer details" });
+      }
+  
+      const fromAccountResult = await pool.query(
+        `SELECT * FROM accounts WHERE id = $1 AND user_id = $2`,
+        [fromAccountId, userId]
+      );
+      if (fromAccountResult.rows.length === 0) {
+        return res.status(403).json({ message: "Unauthorized or source account not found" });
+      }
+  
+      const fromAccount = fromAccountResult.rows[0];
+  
+      if (parseFloat(fromAccount.balance) < amount) {
+        return res.status(400).json({ message: "Insufficient balance" });
+      }
+  
+      const toAccountResult = await pool.query(`SELECT * FROM accounts WHERE id = $1`, [toAccountId]);
+      if (toAccountResult.rows.length === 0) {
+        return res.status(404).json({ message: "Destination account not found" });
+      }
+  
+      const timestamp = new Date().toISOString().replace("T", " ").split(".")[0];
+      const debitLog = `Debited ₹${amount} to ${toAccountId} on ${timestamp}`;
+      const creditLog = `Credited ₹${amount} from ${fromAccountId} on ${timestamp}`;
+  
+      await pool.query("BEGIN");
+  
+      await pool.query(
+        `UPDATE accounts
+         SET balance = balance - $1,
+             logs = array_append(logs, $2)
+         WHERE id = $3`,
+        [amount, debitLog, fromAccountId]
+      );
+  
+      await pool.query(
+        `UPDATE accounts
+         SET balance = balance + $1,
+             logs = array_append(logs, $2)
+         WHERE id = $3`,
+        [amount, creditLog, toAccountId]
+      );
+  
+      await pool.query("COMMIT");
+  
+      const updatedAccounts = await pool.query(
+        `SELECT * FROM accounts WHERE user_id = $1`,
+        [userId]
+      );
+  
+      return res.status(200).json({
+        message: "Transfer successful",
+        accounts: updatedAccounts.rows
+      });
+  
     } catch (err) {
-        if (err.name === "TokenExpiredError") {
-            return res.status(401).json({ message: "Token expired" });
-        } else if (err.name === "JsonWebTokenError") {
-            return res.status(401).json({ message: "Invalid token" });
-        } else {
-            return res.status(500).json({ message: `${err}` });
-        }
+      await pool.query("ROLLBACK");
+      return res.status(500).json({ message: "Transfer failed", error: `${err}` });
     }
-};
-
-
+  };
 const deleteAccount = async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
@@ -141,12 +168,11 @@ const deleteAccount = async (req, res) => {
             return res.status(401).json({ message: "Authorization token missing or malformed" });
         }
         const token = authHeader.split(" ")[1];
-        
+
         const decoded = verifyJWT(token);
         const userId = decoded.id;
         const accountId = req.params.accountId;
 
-        console.log(accountId,userId)
         const check = await pool.query(`SELECT * FROM accounts WHERE id = $1 AND user_id = $2`, [accountId, userId]);
         if (check.rows.length === 0) {
             return res.status(403).json({ message: "Unauthorized or account not found" });
