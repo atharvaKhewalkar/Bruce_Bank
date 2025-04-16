@@ -12,6 +12,7 @@ const AddAccount = forwardRef((props, ref) => {
     await createAccount(user.token,balance)
     window.location.reload();
   }
+  
   return (
     <div className="bg-transparent backdrop-blur-[2px] w-full absolute h-screen">
       <div className="flex flex-row justify-center items-center h-full">

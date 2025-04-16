@@ -15,9 +15,9 @@ const transporter = nodemailer.createTransport({
  */
 async function sendOtpMail(to, otp) {
   const mailOptions = {
-    from: `"Dimension Bank" <${process.env.EMAIL_USER}>`,
+    from: `"Bruce Bank" <${process.env.EMAIL_USER}>`,
     to,
-    subject: "Your OTP for Dimension Bank Login",
+    subject: "Your OTP for Bruce Bank Login",
     html: `
       <div style="font-family: sans-serif;">
         <h2>🛡️ OTP Verification</h2>
